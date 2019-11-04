@@ -1,0 +1,122 @@
+rm(list=ls())
+
+# Install packages
+install.packages("data.table")
+install.packages("ggplot2")
+
+require("data.table")
+require("ggplot2")
+
+# Load library
+library("data.table")
+
+######################################################
+year = "2015"
+quarter = 1
+######################################################
+# Read in DB1B Data
+dataset=read.csv("C:/Users/irisr/Desktop/ML/454484610_T_DB1B_MARKET.csv", sep=",", header=T)
+View(dataset)
+save(dataset, file="C:/Users/irisr/Desktop/ML/Econ690 HW1/hw1data")
+dataset=data.table(dataset)
+
+# Removing any tickets that have a ticket carrier change.
+dataset=subset(dataset, TK_CARRIER_CHANGE ==0)
+View(dataset)
+
+# Multiply the passengers number by 10 for each ticket.
+dataset$PASSENGERS=dataset$PASSENGERS*10
+# Calculate the total number of passengers in each market
+market=paste(dataset$ORIGIN_AIRPORT_ID, dataset$DEST_AIRPORT_ID, sep="")
+market=data.table(market)
+dataset=cbind(dataset, market)
+psum = aggregate(dataset$PASSENGERS, by = list(dataset$market), FUN=sum)
+colnames(psum)=c("market","passengers_sum")
+
+# remove tickets that belong to a market with less than 20 passengers per day.
+## calculate the sum of passengers per day
+psumday=aggregate(dataset$PASSENGERS, by=list(dataset$ITIN_ID), FUN=sum) 
+colnames(psumday)=c("ITIN_ID","psumday")
+View(psumday)
+psumday = subset(psumday, psumday>=20) 
+dataset = merge(dataset, psumday, by = "ITIN_ID")               
+
+
+# Remove tickets with prices less than $25 or more than $2,500.
+dataset = subset(dataset, MARKET_FARE > 25 & MARKET_FARE < 2500)
+View(dataset)
+
+
+# For each market-airline
+# i) Calculate the average price.
+market_airline=aggregate(dataset$MARKET_FARE, by=list(dataset$TICKET_CARRIER), FUN=weighted.mean)
+colnames(market_airline)=c("ticket_carrier","average_price")
+View(market_airline)
+# ii) Calculate the total number of passengers.
+MA_passengers=aggregate(dataset$PASSENGERS, by=list(dataset$TICKET_CARRIER), FUN=sum)
+colnames(MA_passengers)=c("ticket_carrier","sum_passengers")
+market_airline=merge(market_airline, MA_passengers, by="ticket_carrier")
+View(market_airline)
+# iii) Calculate the average distance.
+MA_distance=aggregate(dataset$MARKET_DISTANCE, by=list(dataset$TICKET_CARRIER), FUN=weighted.mean)
+colnames(MA_distance)=c("ticket_carrier","average_distance")
+market_airline=merge(market_airline, MA_distance, by="ticket_carrier")
+View(market_airline)
+
+# For each market.
+# i) Calculate the average price.
+avgmkt_price=aggregate(dataset$MARKET_FARE, by=list(dataset$market), FUN=weighted.mean)
+colnames(avgmkt_price)=c("market","average_price")
+View(avgmkt_price)
+# ii) Calculate the average distance.
+avgmkt_distance=aggregate(dataset$MARKET_DISTANCE, by=list(dataset$market), FUN=weighted.mean)
+colnames(avgmkt_distance)=c("market","average_distance")
+View(avgmkt_distance)
+market_level=merge(avgmkt_price, avgmkt_distance, by="market")
+# iii) Calculate the total number of firms.
+install.packages("pylr")
+library("plyr")
+sum_firms=count(dataset$TICKET_CARRIER, var= "dataset$market")
+colnames(sum_firms)=c("market","sum_firms")
+View(sum_firms)
+market_level=merge(market_level, sum_firms, by="market")
+View(market_level)
+# iv) Calculate the HHI, defined as the sum of squared market squares.
+# calculate the sum of passengers for each airline in each market
+mktshare=dataset[,list(sum(PASSENGERS,na.rm=T)),by=c("market","TICKET_CARRIER")]
+colnames(mktshare)=c("market","ticket_carrier","passengers")
+mktshare=data.table(mktshare)
+
+View(mktshare)
+# calculate the market size for each market
+mktshare[,mktsize := sum(passengers,na.rm=T),by=c("market")]
+# calculate the ratio shared for each firm in each market
+mktshare$share_ratio= mktshare$passengers/mktshare$mktsize*100
+mktshare$share_ratio2=mktshare$share_ratio^2
+mktshare[,HHI := sum(share_ratio2,na.rm=T),by=c("market")]
+hhi = subset(mktshare,select=c("market","HHI")) 
+View(hhi)
+market_level=merge(market_level,hhi, by= "market")
+
+
+# Download “populations.R”. 
+load("C:/Users/irisr/Desktop/ML/populations.R")
+populations=data.table(populations)
+View(populations)
+populations$market = paste(populations$origin_airport_id,populations$dest_airport_id, sep="")
+# v2) Merge this dataset with your market-level dataset.
+market_level=merge(market_level, populations, by="market")
+View(market_level)
+
+
+# Report summary statistics.
+install.packages("knitr")
+library(knitr)
+kable(summary(market_airline), format = "html") # summary of market_airline dataset
+kable(summary(market_level), format = "html") # summary of market_level dataset
+
+# Generate a scatter plot of HHI versus prices at the market level.
+library(ggplot2)
+ggplot(data=market_level,aes(y=average_price,x=HHI))+geom_point()+ylab("average price")+xlab("HHI")
+ggplot(data=market_level,aes(x=average_price)) + geom_density() + xlab("average price") + ylab("density")
+ggplot(data=market_level,aes(x=HHI)) + geom_density() + xlab("HHI") + ylab("density")
