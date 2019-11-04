@@ -1,152 +1,225 @@
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-# clear work place
 rm(list=ls())
 ```
 
-
 ```{r}
-# Question 0
-# Read in market airline level Data
-load("C:/Users/irisr/Desktop/ML/Econ690HW3/market_airline_level.R")
-
-# Read in market level Data
-load("C:/Users/irisr/Desktop/ML/Econ690HW3/market_level.R")
-
 # require packages
 require("data.table")
-require("glmnet")
-require("glmnet")
-require("ggplot2")
-require("knitr")
-require("kableExtra")
+require(leaps)
+require(glmnet)
+# Load library
+library(data.table)
+library(leaps)
+library(glmnet)
+```
+
+```{r}
+# Read in market level airline Data
+load("C:/Users/irisr/Desktop/ML/690HW2/airline_data_market_level.R")
+```
 
 
-# parameters
-carrier = "AA"
-ntest = 1000
+```{r}
+# Download “lookup and hub.R”. 
+load("C:/Users/irisr/Desktop/ML/690HW2/lookup_and_hub_r.R")
+# Merge this data with the original market level airline dataset
+hubs=data.frame(lookup_and_hub$Code,1*(rowSums(lookup_and_hub[,4:ncol(lookup_and_hub)])>0))
+data=data.table(data)
+colnames(hubs)=c("dest_airport_id","hub")
+data=merge(datam,hubs,by=c("dest_airport_id"))
+colnames(hubs)=c("origin_airport_id","hub")
+data=merge(data,hubs,by=c("origin_airport_id"))
+data$hub=1*((data$hub.x+data$hub.y)>0)
+data=subset(data, select = -c(12:13))
 
-datam$market_id = paste(datam$origin_airport_id,datam$dest_airport_id)
-datama$market_id = paste(datama$origin_airport_id,datama$dest_airport_id)
+```
 
-# market airline dataset(datama)
-market_with_aa = data.table(datama)[,sum(carrier%in%ticket_carrier), by=c("market_id")][,market_id[V1==1]]
-datam$aa_in = 1*(datam$market_id%in%market_with_aa)
-datam$num_competitors = datam$num_carriers - datam$aa_in
 
+```{r}
+# Download “vacations.R”.
+load("C:/Users/irisr/Desktop/ML/690HW2/vacations.R")
+# Merge dataset
+colnames(vacations)=c("dest_city","dest_vacation_spot")
+data=merge(data,vacations,by=c("dest_city"))
+colnames(vacations)=c("origin_city", "origin_vacation_spot")
+data=merge(data, vacations, by="origin_city")
+data$vacation_route=as.numeric(rowSums(data[, c(13,14)])>0)
+data=subset(data, select = -c(13:14))
+```
+
+```{r}
+# Download “data income.R”.
+load("C:/Users/irisr/Desktop/ML/690HW2/data_income.R")
+# Merge dataset
+colnames(msa_income)=c("dest_city","dest_median_income")
+data= merge(data, msa_income, by=c("dest_city"))
+colnames(msa_income)=c("origin_city", "origin_median_income")
+data=merge(data, msa_income, by="origin_city")
+# calculate the  geometric mean of the median income of the market’s endpoints
+data$geomean_income=sqrt(data$origin_median_income*data$dest_median_income)
+data=subset(data, select = -c(14,15))
+```
+
+
+```{r}
+# Download “slot controlled.R”.
+load("C:/Users/irisr/Desktop/ML/690HW2/slot_controlled.R")
+# Merge dataset
+data=merge(data,slot_controlled, by.x="origin_airport_id", by.y="airport")
+data=merge(data,slot_controlled, by.x="dest_airport_id", by.y="airport")
+data$slot_controlled=1*((data$slot_controlled.x+data$slot_controlled.y)>0)
+data=subset(data, select = -c(15,16))
+```
+
+
+```{r}
+# Sort data by origin airport id and then by dest airport id.
+data=data[order(data$origin_airport_id, data$dest_airport_id, decreasing = F), ]
+
+```
+
+
+ 
+
+Divide the data into a training dataset and a test dataset.
+
+
+```{r}
+# Set the seed to 0 
 set.seed(0)
-
-test_ind = sample.int(nrow(datam),ntest)
-datam_tr = datam[-test_ind,]
-datam_te = datam[test_ind,]
 ```
 
-
 ```{r}
-#Estimate a linear probability model, predicting whether American Airlines enters a
-#market as a function of the number of competitors.
-lpm = lm(aa_in~num_competitors,datam_tr)
-lpm_mse = mean((datam_te$aa_in - predict(lpm,datam_te))^2)
-lpm_mse
-```
-
-
-```{r}
-# Repeat (1) using a logit model instead of a linear probability model.
-logit1=glm(aa_in~num_competitors,data = datam_tr,family=binomial(link="logit"))
-logit_mse=mean((datam_te$aa_in-predict.glm(logit1,datam_te,type="response"))^2)
-logit_mse
-```
-
-
-```{r}
-# Repeat (1) using a probit model instead of a linear probability model.
-probit1=glm(aa_in~num_competitors,data=datam_tr, family=binomial(link="probit"))
-probit_mse=mean((datam_te$aa_in-predict.glm(probit1,datam_te,
-                                            type="response"))^2)
-probit_mse
-```
-
-
-```{r}
-# Compute non-parametric estimates of the conditional probabilities of entering.
-npar=aggregate(datam_tr$aa_in, by=list(datam_tr$num_competitors), mean)
-setnames(npar, c("num_competitors","nonpar"))
-# Calculate the MSE.
-datam_te = merge(datam_te,npar,by="num_competitors", all.x = T)
-datam_tr = merge(datam_tr,npar,by="num_competitors", all.x = T)
-npar_mse = mean((datam_te$aa_in-datam_te$nonpar)^2)
-npar_mse
+# Begin by randomly allocating 50% of the data to the test set and the rest to the training set
+tr=sample(nrow(data),size=nrow(data)*0.5,replace=F)
+train=data[tr,]
+test=data[-tr,]
 ```
 
 
 
 ```{r}
-# Plot the fitted values of each regression in one graph.
-datam_tr$lpm_fitvalues = predict(lpm,datam_tr)
-datam_tr$logit_fitvalues = predict.glm(logit1, datam_tr,type="response")
-datam_tr$probit_fitvalues = predict.glm(probit1,datam_tr, type="response")
-graph1 = ggplot(datam_tr, aes(x=num_competitors))+
-  geom_point(aes(y=lpm_fitvalues), colour="red")+
-  geom_point(aes(y=logit_fitvalues), colour="blue")+
-  geom_point(aes(y=probit_fitvalues),colour="green")+
-  geom_point(aes(y=nonpar), colour="yellow")+
-  xlab("number of competitors")+
-  ylab("the probabilities of entering the market")+
-  theme_bw()
-graph1
-lpm_coef = summary(lpm)$coef[2,1]
-logit_coef = summary(logit1)$coef[2,1] 
-probit_coef = summary(probit1)$coef[2,1]
-COEF = cbind(c(lpm_coef,logit_coef,probit_coef))
-rownames(COEF) = c("linear", "logit", "probit")
-colnames(COEF) = c("coef")
-kable(COEF)%>%kable_styling(bootstrap_options = "striped", full_width = F)
+# Estimate a linear model including six variables (market income, market size, slot_controlled, vacation route, hub route, average distance).
+reg.ols1<- lm(num_carriers~
+            geomean_income+market_size+slot_controlled+
+            vacation_route+hub+average_distance_m, data=train)
+#compute R square:
+ols1.summary=summary(reg.ols1)
+ols1.summary$r.squared
+#calculate the mse on the test sample
+#test=test[-3069,]
+ols1.mse=mean((test$num_carriers-predict(reg.ols1,test))^2)
+ols1.mse
 ```
-According to the table of the coefficients of the first three models, we know that:
-In the linear regression model, the probability of entering the market will increase 0.14 when adding one competitor;
-In the logit regression model, the probability of entering the market will increase 1.35 when adding one competitor;
-In the linear regression model, the probability of entering the market will increase 0.73 when adding one competitor.
+R square=0.2641193
 
-The estimated relationships are not casual, since when the number of competieors increase, the probability of entering the market should decrease.
+MSE=2.157328
 
-The estimates for the probit and logit are not similar, and we should not expected this ex ante.
+
+```{r}
+# Estimate a linear model with second order polynomials and all cross terms.
+reg.ols2<-lm(num_carriers~
+            polym(geomean_income+market_size+slot_controlled+
+            vacation_route+hub+average_distance_m, degree=2, raw=T),data=train)
+ols2.summary=summary(reg.ols2)
+#R squared
+ols2.summary$r.squared
+#MSE on test sample
+ols2.mse=mean((test$num_carriers-predict(reg.ols2,test))^2)
+ols2.mse
+```
+R squared=0.0424384
+
+MSE=2.7054
 
 
 
 ```{r}
-# Add the average market distance, market size, hub route indicator, vacation 
-# route indicator, slot controlled indicator, and market income to the set of 
-# predictors. Fit to the data L1 regularized logistic regression.
-x_treat = model.matrix(aa_in~poly(num_competitors, average_distance_m, 
-                             market_size, hub_route, vacation_route, 
-                             slot_controlled,market_income, 
-                             degree = 2, raw = T), datam_tr)
-x_test = model.matrix(aa_in~poly(num_competitors, average_distance_m, 
-                               market_size, hub_route, vacation_route, 
-                               slot_controlled,market_income, 
-                               degree = 2, raw = T), datam_te)
-y_treat = datam_tr$aa_in
-cv.out=cv.glmnet(x_treat,y_treat,alpha=1,family="binomial",type.measure= "mse")
-logistic = glmnet(x_treat,y_treat,family="binomial")
-logistic_mse = mean((datam_te$aa_in-predict(logistic, 
-                                            type="response", 
-                                            s=cv.out$lambda.min, 
-                                            newx = x_test))^2)
-logistic_mse
+#Backward selection
+reg.ols3 <- regsubsets(num_carriers~poly(geomean_income, market_size, 
+                                       slot_controlled, vacation_route, 
+                                       hub,average_distance_m, 
+                                       degree = 2, raw = T), 
+                     data = train, method = "backward", nvmax = 27)
+ols3.summary <- summary(reg.ols3)
+#select model with lowest bic
+min_bic <- which.min(ols3.summary$bic)
+coef(reg.ols3, min_bic)
+#select model with biggest adjr2
+max_adjr2 <- which.max(ols3.summary$adjr2)
+coef(reg.ols3, max_adjr2)
+
+#compute out-sample MSE
+#model with smallest BIC
+ols3.min_bic <- lm(num_carriers~geomean_income+I(geomean_income^2)+
+                       I(market_size^2)+market_size+
+                       I(market_size*geomean_income)+
+                       I(market_size*vacation_route)+
+                       I(market_size*average_distance_m)+
+                       I(average_distance_m^2)+
+                       I(vacation_route^2)+I(slot_controlled*hub)+
+                       I(hub^2)+I(vacation_route*average_distance_m), 
+                     data=train)
+ols3.min_bic.mse <- mean((test$num_carriers-predict(ols3.min_bic, test))^2)
+ols3.min_bic.mse
+#model with greatest adjusted R squared
+ols3.max_adjr2 <- lm(num_carriers~geomean_income+I(geomean_income^2)+
+                       market_size+I(geomean_income*market_size)+
+                       I(market_size^2)+slot_controlled+average_distance_m+
+                       I(geomean_income*slot_controlled)+
+                       I(geomean_income*vacation_route)+
+                       I(slot_controlled*vacation_route)+
+                       average_distance_m+hub+
+                       I(market_size*hub)+
+                       I(market_size*average_distance_m)+
+                       I(vacation_route*average_distance_m)+
+                       I(hub*average_distance_m)+
+                       I(average_distance_m^2)+I(vacation_route^2)+
+                       I(vacation_route*hub)+
+                       I(slot_controlled*hub)+I(hub^2), 
+                     data = train)
+ols3.max_adjr2.mse <- mean((test$num_carriers-predict(ols3.max_adjr2, test))^2)
+ols3.max_adjr2.mse
 ```
+Compare with the fit and prediction performance of the OLS model, we know that when the R square is higher, the MSE is lower. The adjusted R^2 criterion has the smallest MSE, and the MSE of the linear model with second order polynomials is the greatest.
+
+
 
 
 ```{r}
-# Put the MSE for each of the 5 models in a table.
-MSE = cbind(c(lpm_mse,logit_mse,probit_mse,npar_mse,logistic_mse))
-rownames(MSE) = c("linear", "logit", "probit", "nonparametric", "logistic")
-colnames(MSE) = c("MSE")
-kable(MSE)%>%kable_styling(bootstrap_options = "striped", full_width = F)
-
+#ridge regression:
+x_train = model.matrix(num_carriers~geomean_income+market_size+
+                    slot_controlled+vacation_route+hub+average_distance_m,train)
+x_test = model.matrix(num_carriers~geomean_income+market_size+
+                    slot_controlled+vacation_route+hub+average_distance_m,test)
+y_train = train$num_carriers
+y_test = test$num_carriers
+grid =10^seq(10,-2, length =100)
+ridge=glmnet(x_train, y_train, alpha = 0, lambda = grid)
+set.seed(0)
+cv=cv.glmnet(x_train,y_train, alpha=0, nfolds = 10)
+bestlam = cv$lambda.min
+bestlam
+reg.ridge.mse = mean((y_test-predict(ridge, s=bestlam, newx = x_test))^2)
+reg.ridge.mse
 ```
-The linear regression model has the largest MSE, and the logistic model with other 6 regressors has the smallest MSE. This result tells us that the probability of entering the market for AA does not only rely on the number of competitors, but also depend on other covariates like the average market
-distance, market size, hub route indicator, vacation route indicator, slot controlled indicator, and market income.
+mse=2.153236
+```{r}
+#lasso regression:
+lasso <- glmnet(x_train, y_train, alpha = 1)
+cv=cv.glmnet (x_train,y_train, alpha=1, nfolds = 10)
+bestlam = cv$lambda.min
+bestlam
+reg.lasso.mse = mean((y_test-predict(lasso, s=bestlam, newx = x_test))^2)
+reg.lasso.mse
+```
+mse=2.157242
+
+The mean square error in Ridge regression and lasso regression are very similar. 
+Both of them are smaller than the MSE in simple OLS and with second order polynomials. 
+But the MSE of backward stepwise are smaller than Ridge and Lasso regression.
