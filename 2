@@ -1,0 +1,153 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# clear work place
+rm(list=ls())
+```
+
+
+```{r}
+# Question 0
+# Read in market airline level Data
+load("C:/Users/irisr/Desktop/ML/Econ690HW3/market_airline_level.R")
+
+# Read in market level Data
+load("C:/Users/irisr/Desktop/ML/Econ690HW3/market_level.R")
+
+# require packages
+require("data.table")
+require("glmnet")
+require("glmnet")
+require("ggplot2")
+require("knitr")
+require("kableExtra")
+
+
+# parameters
+carrier = "AA"
+ntest = 1000
+
+datam$market_id = paste(datam$origin_airport_id,datam$dest_airport_id)
+datama$market_id = paste(datama$origin_airport_id,datama$dest_airport_id)
+
+# market airline dataset(datama)
+market_with_aa = data.table(datama)[,sum(carrier%in%ticket_carrier), by=c("market_id")][,market_id[V1==1]]
+datam$aa_in = 1*(datam$market_id%in%market_with_aa)
+datam$num_competitors = datam$num_carriers - datam$aa_in
+
+set.seed(0)
+
+test_ind = sample.int(nrow(datam),ntest)
+datam_tr = datam[-test_ind,]
+datam_te = datam[test_ind,]
+```
+
+
+```{r}
+#Estimate a linear probability model, predicting whether American Airlines enters a
+#market as a function of the number of competitors.
+lpm = lm(aa_in~num_competitors,datam_tr)
+lpm_mse = mean((datam_te$aa_in - predict(lpm,datam_te))^2)
+lpm_mse
+```
+
+
+```{r}
+# Repeat (1) using a logit model instead of a linear probability model.
+logit1=glm(aa_in~num_competitors,data = datam_tr,family=binomial(link="logit"))
+logit_mse=mean((datam_te$aa_in-predict.glm(logit1,datam_te,type="response"))^2)
+logit_mse
+```
+
+
+```{r}
+# Repeat (1) using a probit model instead of a linear probability model.
+probit1=glm(aa_in~num_competitors,data=datam_tr, family=binomial(link="probit"))
+probit_mse=mean((datam_te$aa_in-predict.glm(probit1,datam_te,
+                                            type="response"))^2)
+probit_mse
+```
+
+
+```{r}
+# Compute non-parametric estimates of the conditional probabilities of entering.
+npar=aggregate(datam_tr$aa_in, by=list(datam_tr$num_competitors), mean)
+setnames(npar, c("num_competitors","nonpar"))
+# Calculate the MSE.
+datam_te = merge(datam_te,npar,by="num_competitors", all.x = T)
+datam_tr = merge(datam_tr,npar,by="num_competitors", all.x = T)
+npar_mse = mean((datam_te$aa_in-datam_te$nonpar)^2)
+npar_mse
+```
+
+
+
+```{r}
+# Plot the fitted values of each regression in one graph.
+datam_tr$lpm_fitvalues = predict(lpm,datam_tr)
+datam_tr$logit_fitvalues = predict.glm(logit1, datam_tr,type="response")
+datam_tr$probit_fitvalues = predict.glm(probit1,datam_tr, type="response")
+graph1 = ggplot(datam_tr, aes(x=num_competitors))+
+  geom_point(aes(y=lpm_fitvalues), colour="red")+
+  geom_point(aes(y=logit_fitvalues), colour="blue")+
+  geom_point(aes(y=probit_fitvalues),colour="green")+
+  geom_point(aes(y=nonpar), colour="yellow")+
+  xlab("number of competitors")+
+  ylab("the probabilities of entering the market")+
+  theme_bw()
+graph1
+lpm_coef = summary(lpm)$coef[2,1]
+logit_coef = summary(logit1)$coef[2,1] 
+probit_coef = summary(probit1)$coef[2,1]
+COEF = cbind(c(lpm_coef,logit_coef,probit_coef))
+rownames(COEF) = c("linear", "logit", "probit")
+colnames(COEF) = c("coef")
+kable(COEF)%>%kable_styling(bootstrap_options = "striped", full_width = F)
+```
+According to the table of the coefficients of the first three models, we know that:
+In the linear regression model, the probability of entering the market will increase 0.14 when adding one competitor;
+In the logit regression model, the probability of entering the market will increase 1.35 when adding one competitor;
+In the linear regression model, the probability of entering the market will increase 0.73 when adding one competitor.
+
+The estimated relationships are not casual, since when the number of competieors increase, the probability of entering the market should decrease.
+
+The estimates for the probit and logit are not similar, and we should not expected this ex ante.
+
+
+
+```{r}
+# Add the average market distance, market size, hub route indicator, vacation 
+# route indicator, slot controlled indicator, and market income to the set of 
+# predictors. Fit to the data L1 regularized logistic regression.
+x_treat = model.matrix(aa_in~poly(num_competitors, average_distance_m, 
+                             market_size, hub_route, vacation_route, 
+                             slot_controlled,market_income, 
+                             degree = 2, raw = T), datam_tr)
+x_test = model.matrix(aa_in~poly(num_competitors, average_distance_m, 
+                               market_size, hub_route, vacation_route, 
+                               slot_controlled,market_income, 
+                               degree = 2, raw = T), datam_te)
+y_treat = datam_tr$aa_in
+cv.out=cv.glmnet(x_treat,y_treat,alpha=1,family="binomial",type.measure= "mse")
+logistic = glmnet(x_treat,y_treat,family="binomial")
+logistic_mse = mean((datam_te$aa_in-predict(logistic, 
+                                            type="response", 
+                                            s=cv.out$lambda.min, 
+                                            newx = x_test))^2)
+logistic_mse
+```
+
+
+```{r}
+# Put the MSE for each of the 5 models in a table.
+MSE = cbind(c(lpm_mse,logit_mse,probit_mse,npar_mse,logistic_mse))
+rownames(MSE) = c("linear", "logit", "probit", "nonparametric", "logistic")
+colnames(MSE) = c("MSE")
+kable(MSE)%>%kable_styling(bootstrap_options = "striped", full_width = F)
+
+```
+The linear regression model has the largest MSE, and the logistic model with other 6 regressors has the smallest MSE. This result tells us that the probability of entering the market for AA does not only rely on the number of competitors, but also depend on other covariates like the average market
+distance, market size, hub route indicator, vacation route indicator, slot controlled indicator, and market income.
